@@ -1,5 +1,5 @@
-﻿import { useContext, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useContext, useEffect, useState } from 'react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { AppContext } from '../context/AppContext';
 import Layout from '../components/Layout';
 import Button from '../components/Button';
@@ -8,19 +8,33 @@ import './EditRequest.css';
 
 export default function EditRequest() {
   const { id } = useParams();
-  const { getRequest, currentUser, updateRequest, validateRequest } = useContext(AppContext);
+  const { getRequest, currentUser, updateRequest, validateRequest, requestsLoading, requestsHydrated } = useContext(AppContext);
   const navigate = useNavigate();
   const request = getRequest(parseInt(id, 10));
 
-  const [title, setTitle] = useState(request?.title || '');
-  const [description, setDescription] = useState(request?.description || '');
-  const [type, setType] = useState(request?.type || 'OTHER');
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  const [type, setType] = useState('OTHER');
+  const [initializedRequestId, setInitializedRequestId] = useState(null);
   const [errors, setErrors] = useState([]);
   const [serverError, setServerError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  useEffect(() => {
+    if (!request) return;
+    if (initializedRequestId === request.id) return;
+    setTitle(request.title);
+    setDescription(request.description);
+    setType(request.type);
+    setInitializedRequestId(request.id);
+  }, [request, initializedRequestId]);
+
   if (!currentUser) {
-    return <div style={{ padding: 20 }}>Non authentifie. <a href="/login">Se connecter</a></div>;
+    return <div style={{ padding: 20 }}>Non authentifie. <Link to="/login">Se connecter</Link></div>;
+  }
+
+  if ((!requestsHydrated || requestsLoading) && !request) {
+    return <Layout><div className="empty-state">Chargement de la demande...</div></Layout>;
   }
 
   if (!request) {
@@ -36,7 +50,7 @@ export default function EditRequest() {
       <Layout>
         <div style={{ padding: 20, background: '#f8d7da', borderRadius: 8, color: '#721c24' }}>
           Cette demande ne peut pas etre modifiee car son statut est {request.status}.
-          <br /><a href="/dashboard">Retour au tableau de bord</a>
+          <br /><Link to="/dashboard">Retour au tableau de bord</Link>
         </div>
       </Layout>
     );

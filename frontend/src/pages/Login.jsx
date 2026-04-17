@@ -1,5 +1,5 @@
-﻿import { useContext, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useContext, useMemo, useState } from 'react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { AppContext } from '../context/AppContext';
 import Button from '../components/Button';
 import Card from '../components/Card';
@@ -12,6 +12,12 @@ export default function Login() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const { login } = useContext(AppContext);
   const navigate = useNavigate();
+  const location = useLocation();
+
+  const registrationSuccess = useMemo(() => {
+    const params = new URLSearchParams(location.search);
+    return params.get('registered') === '1';
+  }, [location.search]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -36,6 +42,22 @@ export default function Login() {
           <p>Systeme de gestion de demandes</p>
         </div>
         <Card title="Connexion">
+          {registrationSuccess && (
+            <div
+              style={{
+                background: '#d4edda',
+                color: '#155724',
+                border: '1px solid #c3e6cb',
+                borderRadius: 8,
+                padding: '10px 12px',
+                marginBottom: 16,
+                fontSize: 14
+              }}
+            >
+              Inscription reussie. Vous pouvez maintenant vous connecter.
+            </div>
+          )}
+
           <form onSubmit={handleSubmit} className="login-form">
             <div className="form-group">
               <label htmlFor="email">Adresse email</label>
@@ -65,7 +87,7 @@ export default function Login() {
             </Button>
           </form>
           <p className="signup-link">
-            Pas de compte? <a href="/register">S'inscrire</a>
+            Pas de compte? <Link to="/register">S'inscrire</Link>
           </p>
         </Card>
       </div>

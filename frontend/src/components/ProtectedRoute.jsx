@@ -9,8 +9,13 @@ export default function ProtectedRoute({ children, requiredRole = null }) {
     return <div style={{ padding: 24 }}>Chargement...</div>;
   }
 
-  if (!currentUser || (requiredRole && currentUser.role !== requiredRole)) {
+  if (!currentUser) {
     return <Navigate to="/login" replace />;
+  }
+
+  if (requiredRole && currentUser.role !== requiredRole) {
+    const fallbackRoute = currentUser.role === 'manager' ? '/manager' : '/dashboard';
+    return <Navigate to={fallbackRoute} replace />;
   }
 
   return children;

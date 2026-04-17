@@ -8,12 +8,16 @@ import './RequestDetail.css';
 
 export default function RequestDetail() {
   const { id } = useParams();
-  const { getRequest, currentUser } = useContext(AppContext);
+  const { getRequest, currentUser, requestsLoading, requestsHydrated } = useContext(AppContext);
   const navigate = useNavigate();
   const request = getRequest(parseInt(id, 10));
 
   if (!currentUser) {
-    return <div style={{ padding: 20 }}>Non authentifie. <a href="/login">Se connecter</a></div>;
+    return <div style={{ padding: 20 }}>Non authentifie. <Link to="/login">Se connecter</Link></div>;
+  }
+
+  if ((!requestsHydrated || requestsLoading) && !request) {
+    return <Layout><div className="empty-state">Chargement de la demande...</div></Layout>;
   }
 
   if (!request) {
@@ -77,7 +81,7 @@ export default function RequestDetail() {
                 <div key={entry.id} className="history-item">
                   <div className="history-marker"></div>
                   <div className="history-content">
-                    <span className="history-status">{entry.status}</span>
+                    <span className="history-status">{entry.fromStatus} {'->'} {entry.status}</span>
                     <small>{entry.date} - {entry.author}</small>
                   </div>
                 </div>

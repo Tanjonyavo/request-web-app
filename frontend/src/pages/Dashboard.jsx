@@ -10,7 +10,7 @@ export default function Dashboard() {
   const { currentUser, getUserRequests, requestsLoading } = useContext(AppContext);
 
   if (!currentUser) {
-    return <div style={{ padding: 20 }}>Non authentifie. <a href="/login">Se connecter</a></div>;
+    return <div style={{ padding: 20 }}>Non authentifie. <Link to="/login">Se connecter</Link></div>;
   }
 
   if (currentUser.role === 'manager') {

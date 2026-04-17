@@ -2,7 +2,7 @@
 from rest_framework import status
 from rest_framework.test import APIClient, APITestCase
 
-from .models import Comment, Request, RequestStatus, RequestType, UserRole
+from .models import Comment, Request, RequestStatus, RequestStatusHistory, RequestType, UserRole
 
 User = get_user_model()
 
@@ -53,6 +53,7 @@ class RequestApiTests(APITestCase):
                 'email': 'newuser@uqo.ca',
                 'full_name': 'New User',
                 'password': 'Password123!',
+                'confirm_password': 'Password123!',
             },
             format='json',
         )
@@ -68,6 +69,7 @@ class RequestApiTests(APITestCase):
                 'email': 'newuser2@uqo.ca',
                 'full_name': 'New User 2',
                 'password': 'Password123!',
+                'confirm_password': 'Password123!',
                 'role': UserRole.MANAGER,
             },
             format='json',
@@ -88,6 +90,67 @@ class RequestApiTests(APITestCase):
         self.assertIn('access', body)
         self.assertIn('refresh', body)
         self.assertEqual(body['user']['email'], 'jean@uqo.ca')
+
+    def test_register_requires_password_confirmation_match(self):
+        response = self.client.post(
+            '/api/auth/register/',
+            {
+                'email': 'badconfirm@uqo.ca',
+                'full_name': 'Bad Confirm',
+                'password': 'Password123!',
+                'confirm_password': 'PasswordABC!',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('confirm_password', response.json())
+
+    def test_register_rejects_duplicate_email_case_insensitive(self):
+        response = self.client.post(
+            '/api/auth/register/',
+            {
+                'email': 'JEAN@UQO.CA',
+                'full_name': 'Jean Duplicate',
+                'password': 'Password123!',
+                'confirm_password': 'Password123!',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('email', response.json())
+
+    def test_register_rejects_short_password(self):
+        response = self.client.post(
+            '/api/auth/register/',
+            {
+                'email': 'shortpwd@uqo.ca',
+                'full_name': 'Short Password',
+                'password': 'Abc123!',
+                'confirm_password': 'Abc123!',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('password', response.json())
+
+    def test_authenticated_user_cannot_register_again(self):
+        self.client.force_authenticate(user=self.user)
+        response = self.client.post(
+            '/api/auth/register/',
+            {
+                'email': 'another@uqo.ca',
+                'full_name': 'Another User',
+                'password': 'Password123!',
+                'confirm_password': 'Password123!',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertIn('detail', response.json())
 
     def test_access_without_token_is_denied(self):
         response = self.client.get('/api/requests/')
@@ -128,6 +191,26 @@ class RequestApiTests(APITestCase):
         request_obj = self._create_request(author=self.other_user)
         response = self.user_client.get(f'/api/requests/{request_obj.id}/')
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_user_list_returns_only_own_requests(self):
+        own_request = self._create_request(author=self.user)
+        self._create_request(author=self.other_user)
+
+        response = self.user_client.get('/api/requests/')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        ids = {item['id'] for item in response.json()}
+        self.assertEqual(ids, {own_request.id})
+
+    def test_manager_list_returns_all_requests(self):
+        request_one = self._create_request(author=self.user)
+        request_two = self._create_request(author=self.other_user)
+
+        response = self.manager_client.get('/api/requests/')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        ids = {item['id'] for item in response.json()}
+        self.assertEqual(ids, {request_one.id, request_two.id})
 
     def test_user_can_update_own_submitted_request(self):
         request_obj = self._create_request(author=self.user)
@@ -189,6 +272,43 @@ class RequestApiTests(APITestCase):
         )
         self.assertEqual(second_response.status_code, status.HTTP_400_BAD_REQUEST)
 
+    def test_change_status_creates_history_entry_and_comment(self):
+        create_response = self.user_client.post(
+            '/api/requests/',
+            {
+                'title': 'Demande switch coeur',
+                'description': 'Le switch coeur est instable depuis ce matin.',
+                'type': RequestType.HARDWARE,
+            },
+            format='json',
+        )
+        self.assertEqual(create_response.status_code, status.HTTP_201_CREATED)
+        request_id = create_response.json()['id']
+
+        response = self.manager_client.post(
+            f'/api/requests/{request_id}/change-status/',
+            {'status': RequestStatus.IN_PROGRESS, 'comment': 'Prise en charge immediatement'},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        request_obj = Request.objects.get(pk=request_id)
+        self.assertEqual(request_obj.status, RequestStatus.IN_PROGRESS)
+        self.assertTrue(
+            RequestStatusHistory.objects.filter(
+                request=request_obj,
+                from_status=RequestStatus.SUBMITTED,
+                to_status=RequestStatus.IN_PROGRESS,
+            ).exists()
+        )
+        self.assertTrue(
+            Comment.objects.filter(
+                request=request_obj,
+                author=self.manager,
+                content='Prise en charge immediatement',
+            ).exists()
+        )
+
     def test_manager_can_add_comment(self):
         request_obj = self._create_request(author=self.user)
 
@@ -218,3 +338,31 @@ class RequestApiTests(APITestCase):
         response = self.user_client.get(f'/api/requests/{request_obj.id}/comments/')
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_manager_cannot_add_blank_comment(self):
+        request_obj = self._create_request(author=self.user)
+
+        response = self.manager_client.post(
+            f'/api/requests/{request_obj.id}/comments/',
+            {'content': '   '},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('content', response.json())
+
+    def test_user_cannot_delete_request_when_not_submitted(self):
+        request_obj = self._create_request(author=self.user, status_value=RequestStatus.IN_PROGRESS)
+
+        response = self.user_client.delete(f'/api/requests/{request_obj.id}/')
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertTrue(Request.objects.filter(pk=request_obj.id).exists())
+
+    def test_manager_can_delete_request_regardless_of_status(self):
+        request_obj = self._create_request(author=self.user, status_value=RequestStatus.IN_PROGRESS)
+
+        response = self.manager_client.delete(f'/api/requests/{request_obj.id}/')
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(Request.objects.filter(pk=request_obj.id).exists())

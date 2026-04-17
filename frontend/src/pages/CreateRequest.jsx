@@ -1,5 +1,5 @@
 ﻿import { useContext, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { AppContext } from '../context/AppContext';
 import Layout from '../components/Layout';
 import Button from '../components/Button';
@@ -17,7 +17,7 @@ export default function CreateRequest() {
   const navigate = useNavigate();
 
   if (!currentUser) {
-    return <div style={{ padding: 20 }}>Non authentifie. <a href="/login">Se connecter</a></div>;
+    return <div style={{ padding: 20 }}>Non authentifie. <Link to="/login">Se connecter</Link></div>;
   }
 
   const handleSubmit = async (e) => {

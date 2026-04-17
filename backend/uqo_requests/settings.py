@@ -6,15 +6,90 @@ import os
 import sys
 from datetime import timedelta
 from pathlib import Path
+from urllib.parse import parse_qs, unquote, urlparse
+
+from django.core.exceptions import ImproperlyConfigured
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = os.getenv(
-    'DJANGO_SECRET_KEY',
-    '4f447b42272d741f4f7730634376723c3f2a582d5d5f5c2b516070277a713b42',
-)
 DEBUG = os.getenv('DJANGO_DEBUG', 'True').lower() == 'true'
 TESTING = 'test' in sys.argv
+SECRET_KEY = os.getenv('DJANGO_SECRET_KEY', '').strip()
+if not SECRET_KEY:
+    if DEBUG:
+        # Insecure development fallback only. Never use this outside local dev.
+        SECRET_KEY = 'unsafe-dev-secret-key-change-me-at-least-32-bytes'
+    else:
+        raise ImproperlyConfigured(
+            'DJANGO_SECRET_KEY must be set when DJANGO_DEBUG is False.'
+        )
+
+
+def env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {'1', 'true', 'yes', 'on'}
+
+
+def database_from_url(database_url: str):
+    parsed = urlparse(database_url)
+    scheme = (parsed.scheme or '').lower()
+    if '+' in scheme:
+        scheme = scheme.split('+', 1)[0]
+
+    query = {key: values[-1] for key, values in parse_qs(parsed.query).items()}
+
+    if scheme in {'postgres', 'postgresql'}:
+        db_name = unquote(parsed.path.lstrip('/'))
+        if not db_name:
+            raise ImproperlyConfigured(
+                "DATABASE_URL for PostgreSQL must include a database name."
+            )
+
+        database_config = {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': db_name,
+            'USER': unquote(parsed.username) if parsed.username else '',
+            'PASSWORD': unquote(parsed.password) if parsed.password else '',
+            'HOST': parsed.hostname or '',
+            'PORT': str(parsed.port or ''),
+        }
+
+        conn_max_age = query.pop('conn_max_age', None)
+        if conn_max_age:
+            try:
+                database_config['CONN_MAX_AGE'] = int(conn_max_age)
+            except ValueError:
+                pass
+
+        if query:
+            database_config['OPTIONS'] = query
+
+        return {'default': database_config}
+
+    if scheme == 'sqlite':
+        raw_path = unquote(parsed.path or '').strip()
+        if parsed.netloc and parsed.netloc != 'localhost':
+            raw_path = f"//{parsed.netloc}{raw_path}"
+
+        if raw_path in {'', '/'}:
+            sqlite_name = str(BASE_DIR / 'db.sqlite3')
+        elif raw_path in {':memory:', '/:memory:'}:
+            sqlite_name = ':memory:'
+        elif len(raw_path) >= 3 and raw_path[0] == '/' and raw_path[2] == ':':
+            sqlite_name = raw_path[1:]
+        else:
+            sqlite_name = raw_path
+
+        return {
+            'default': {
+                'ENGINE': 'django.db.backends.sqlite3',
+                'NAME': sqlite_name,
+            }
+        }
+
+    raise ImproperlyConfigured(f"Unsupported DATABASE_URL scheme: '{parsed.scheme}'")
 
 ALLOWED_HOSTS = [
     host.strip()
@@ -65,12 +140,38 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'uqo_requests.wsgi.application'
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+DATABASE_URL = os.getenv('DATABASE_URL', '').strip()
+DB_ENGINE = os.getenv('DB_ENGINE', 'postgresql').strip().lower()
+
+if TESTING and env_bool('DJANGO_TEST_USE_SQLITE', True):
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+        }
     }
-}
+elif DATABASE_URL:
+    DATABASES = database_from_url(DATABASE_URL)
+else:
+    if DB_ENGINE == 'sqlite':
+        DATABASES = {
+            'default': {
+                'ENGINE': 'django.db.backends.sqlite3',
+                'NAME': os.getenv('SQLITE_NAME', str(BASE_DIR / 'db.sqlite3')),
+            }
+        }
+    else:
+        DATABASES = {
+            'default': {
+                'ENGINE': 'django.db.backends.postgresql',
+                'NAME': os.getenv('POSTGRES_DB', 'uqo_requests'),
+                'USER': os.getenv('POSTGRES_USER', 'uqo_requests'),
+                'PASSWORD': os.getenv('POSTGRES_PASSWORD', 'uqo_requests'),
+                'HOST': os.getenv('POSTGRES_HOST', 'localhost'),
+                'PORT': os.getenv('POSTGRES_PORT', '5432'),
+                'CONN_MAX_AGE': int(os.getenv('POSTGRES_CONN_MAX_AGE', '60')),
+            }
+        }
 
 AUTH_PASSWORD_VALIDATORS = [
     {

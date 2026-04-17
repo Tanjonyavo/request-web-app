@@ -26,6 +26,13 @@ class RegisterAPIView(generics.CreateAPIView):
     serializer_class = RegisterSerializer
     permission_classes = [permissions.AllowAny]
 
+    def create(self, request, *args, **kwargs):
+        if request.user.is_authenticated:
+            raise PermissionDenied(
+                "Vous etes deja authentifie. Veuillez vous deconnecter avant de creer un nouveau compte."
+            )
+        return super().create(request, *args, **kwargs)
+
 
 class MeAPIView(generics.RetrieveAPIView):
     serializer_class = UserSerializer

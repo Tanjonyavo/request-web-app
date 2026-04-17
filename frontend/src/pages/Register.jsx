@@ -1,5 +1,5 @@
-﻿import { useContext, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useContext, useState } from 'react';
+import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { AppContext } from '../context/AppContext';
 import Button from '../components/Button';
 import Card from '../components/Card';
@@ -17,8 +17,8 @@ export default function Register() {
   const navigate = useNavigate();
 
   if (currentUser) {
-    navigate('/dashboard');
-    return null;
+    const defaultRoute = currentUser.role === 'manager' ? '/manager' : '/dashboard';
+    return <Navigate to={defaultRoute} replace />;
   }
 
   const validateForm = () => {
@@ -26,11 +26,11 @@ export default function Register() {
 
     if (!fullName.trim()) nextErrors.fullName = 'Le nom complet est requis';
 
-    if (!email.trim()) nextErrors.email = 'L\'email est requis';
+    if (!email.trim()) nextErrors.email = "L'email est requis";
     else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) nextErrors.email = 'Email invalide';
 
     if (!password) nextErrors.password = 'Le mot de passe est requis';
-    else if (password.length < 6) nextErrors.password = 'Minimum 6 caracteres';
+    else if (password.length < 8) nextErrors.password = 'Minimum 8 caracteres';
 
     if (!confirmPassword) nextErrors.confirmPassword = 'Confirmation requise';
     else if (password !== confirmPassword) nextErrors.confirmPassword = 'Les mots de passe ne correspondent pas';
@@ -47,8 +47,8 @@ export default function Register() {
 
     setIsSubmitting(true);
     try {
-      await registerUser(fullName, email, password);
-      navigate('/login');
+      await registerUser(fullName, email, password, confirmPassword);
+      navigate('/login?registered=1');
     } catch (error) {
       setServerError(error.message);
     } finally {
@@ -96,7 +96,7 @@ export default function Register() {
                 type="password"
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
-                placeholder="Minimum 6 caracteres"
+                placeholder="Minimum 8 caracteres"
                 className={errors.password ? 'input-error' : ''}
               />
               {errors.password && <span className="error-text">{errors.password}</span>}
@@ -119,7 +119,7 @@ export default function Register() {
             </Button>
           </form>
           <p className="login-link">
-            Deja inscrit? <a href="/login">Se connecter</a>
+            Deja inscrit? <Link to="/login">Se connecter</Link>
           </p>
         </Card>
       </div>

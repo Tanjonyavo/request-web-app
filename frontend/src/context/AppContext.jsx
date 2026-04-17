@@ -1,5 +1,5 @@
 ﻿/* eslint-disable react-refresh/only-export-components */
-import { createContext, useCallback, useEffect, useState } from 'react';
+import { createContext, useCallback, useEffect, useMemo, useState } from 'react';
 import { authApi, clearAuthTokens, getAccessToken, requestApi, setAuthTokens } from '../services/api';
 
 export const AppContext = createContext();
@@ -50,16 +50,19 @@ export const AppProvider = ({ children }) => {
   const [requests, setRequests] = useState([]);
   const [authLoading, setAuthLoading] = useState(true);
   const [requestsLoading, setRequestsLoading] = useState(false);
+  const [requestsHydrated, setRequestsHydrated] = useState(false);
 
   const logout = useCallback(() => {
     clearAuthTokens();
     setCurrentUser(null);
     setRequests([]);
+    setRequestsHydrated(false);
   }, []);
 
   const loadRequests = useCallback(async () => {
     if (!currentUser) {
       setRequests([]);
+      setRequestsHydrated(true);
       return;
     }
 
@@ -72,6 +75,7 @@ export const AppProvider = ({ children }) => {
       throw new Error(parseApiError(error, 'Impossible de charger les demandes'));
     } finally {
       setRequestsLoading(false);
+      setRequestsHydrated(true);
     }
   }, [currentUser, logout]);
 
@@ -80,12 +84,14 @@ export const AppProvider = ({ children }) => {
       const token = getAccessToken();
       if (!token) {
         setAuthLoading(false);
+        setRequestsHydrated(true);
         return;
       }
 
       try {
         const me = await authApi.me();
         setCurrentUser(me.data);
+        setRequestsHydrated(false);
       } catch {
         logout();
       } finally {
@@ -104,26 +110,32 @@ export const AppProvider = ({ children }) => {
     });
   }, [currentUser, loadRequests]);
 
-  const login = async (email, password) => {
+  const login = useCallback(async (email, password) => {
     try {
       const response = await authApi.login({ email, password });
       setAuthTokens({ access: response.data.access, refresh: response.data.refresh });
+      setRequestsHydrated(false);
       setCurrentUser(response.data.user);
       return response.data.user;
     } catch (error) {
       throw new Error(parseApiError(error, 'Email ou mot de passe invalide'));
     }
-  };
+  }, []);
 
-  const registerUser = async (fullName, email, password) => {
+  const registerUser = useCallback(async (fullName, email, password, confirmPassword) => {
     try {
-      await authApi.register({ full_name: fullName, email, password });
+      await authApi.register({
+        full_name: fullName,
+        email,
+        password,
+        confirm_password: confirmPassword
+      });
     } catch (error) {
       throw new Error(parseApiError(error, 'Inscription impossible'));
     }
-  };
+  }, []);
 
-  const validateRequest = (data) => {
+  const validateRequest = useCallback((data) => {
     const errors = [];
 
     if (!data.title?.trim()) errors.push('Le titre est requis');
@@ -139,9 +151,9 @@ export const AppProvider = ({ children }) => {
     }
 
     return { isValid: errors.length === 0, errors };
-  };
+  }, []);
 
-  const createRequest = async (newRequest) => {
+  const createRequest = useCallback(async (newRequest) => {
     const validation = validateRequest(newRequest);
     if (!validation.isValid) throw new Error(validation.errors.join(' | '));
 
@@ -153,9 +165,9 @@ export const AppProvider = ({ children }) => {
     } catch (error) {
       throw new Error(parseApiError(error, 'Creation de la demande impossible'));
     }
-  };
+  }, [validateRequest]);
 
-  const updateRequest = async (id, updates) => {
+  const updateRequest = useCallback(async (id, updates) => {
     const validation = validateRequest(updates);
     if (!validation.isValid) throw new Error(validation.errors.join(' | '));
 
@@ -167,9 +179,9 @@ export const AppProvider = ({ children }) => {
     } catch (error) {
       throw new Error(parseApiError(error, 'Modification impossible'));
     }
-  };
+  }, [validateRequest]);
 
-  const updateRequestStatus = async (id, newStatus, comment = '') => {
+  const updateRequestStatus = useCallback(async (id, newStatus, comment = '') => {
     try {
       const response = await requestApi.changeStatus(id, { status: newStatus, comment });
       const mapped = mapRequest(response.data);
@@ -178,11 +190,32 @@ export const AppProvider = ({ children }) => {
     } catch (error) {
       throw new Error(parseApiError(error, 'Changement de statut impossible'));
     }
-  };
+  }, []);
 
-  const addManagerComment = async (id, content) => {
+  const addManagerComment = useCallback(async (id, content) => {
     try {
-      await requestApi.addComment(id, { content });
+      const response = await requestApi.addComment(id, { content });
+      const createdComment = {
+        id: response.data.id,
+        author: response.data.author?.email || 'unknown',
+        content: response.data.content,
+        date: normalizeDate(response.data.created_at)
+      };
+
+      let updatedRequest = null;
+      setRequests((prev) =>
+        prev.map((request) => {
+          if (request.id !== id) return request;
+          updatedRequest = {
+            ...request,
+            comments: [...(request.comments || []), createdComment]
+          };
+          return updatedRequest;
+        })
+      );
+
+      if (updatedRequest) return updatedRequest;
+
       const refreshed = await requestApi.retrieve(id);
       const mapped = mapRequest(refreshed.data);
       setRequests((prev) => prev.map((request) => (request.id === id ? mapped : request)));
@@ -190,34 +223,52 @@ export const AppProvider = ({ children }) => {
     } catch (error) {
       throw new Error(parseApiError(error, 'Ajout du commentaire impossible'));
     }
-  };
+  }, []);
 
-  const getRequest = (id) => requests.find((request) => request.id === id);
-  const getUserRequests = () => requests;
-  const getAllRequests = () => requests;
+  const getRequest = useCallback((id) => requests.find((request) => request.id === id), [requests]);
+  const getUserRequests = useCallback(() => requests, [requests]);
+  const getAllRequests = useCallback(() => requests, [requests]);
 
-  return (
-    <AppContext.Provider
-      value={{
-        currentUser,
-        authLoading,
-        requestsLoading,
-        requests,
-        login,
-        logout,
-        registerUser,
-        createRequest,
-        updateRequest,
-        updateRequestStatus,
-        addManagerComment,
-        getRequest,
-        getUserRequests,
-        getAllRequests,
-        validateRequest,
-        reloadRequests: loadRequests
-      }}
-    >
-      {children}
-    </AppContext.Provider>
+  const contextValue = useMemo(
+    () => ({
+      currentUser,
+      authLoading,
+      requestsLoading,
+      requestsHydrated,
+      requests,
+      login,
+      logout,
+      registerUser,
+      createRequest,
+      updateRequest,
+      updateRequestStatus,
+      addManagerComment,
+      getRequest,
+      getUserRequests,
+      getAllRequests,
+      validateRequest,
+      reloadRequests: loadRequests
+    }),
+    [
+      currentUser,
+      authLoading,
+      requestsLoading,
+      requestsHydrated,
+      requests,
+      login,
+      logout,
+      registerUser,
+      createRequest,
+      updateRequest,
+      updateRequestStatus,
+      addManagerComment,
+      getRequest,
+      getUserRequests,
+      getAllRequests,
+      validateRequest,
+      loadRequests
+    ]
   );
+
+  return <AppContext.Provider value={contextValue}>{children}</AppContext.Provider>;
 };

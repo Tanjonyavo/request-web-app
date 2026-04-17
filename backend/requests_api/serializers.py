@@ -1,4 +1,5 @@
-﻿from django.contrib.auth import get_user_model
+from django.contrib.auth import get_user_model
+from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
@@ -21,24 +22,47 @@ class UserSerializer(serializers.ModelSerializer):
 
 class RegisterSerializer(serializers.ModelSerializer):
     full_name = serializers.CharField(write_only=True)
-    password = serializers.CharField(write_only=True, min_length=6)
+    password = serializers.CharField(write_only=True, min_length=8)
+    confirm_password = serializers.CharField(write_only=True, min_length=8)
 
     class Meta:
         model = User
-        fields = ["email", "full_name", "password"]
+        fields = ["email", "full_name", "password", "confirm_password"]
 
     def validate(self, attrs):
-        allowed_fields = {"email", "full_name", "password"}
+        allowed_fields = {"email", "full_name", "password", "confirm_password"}
         extra_fields = set(self.initial_data.keys()) - allowed_fields
         if extra_fields:
             raise serializers.ValidationError(
                 {field: "Ce champ n'est pas autorise." for field in sorted(extra_fields)}
             )
+
+        password = attrs.get("password", "")
+        confirm_password = attrs.get("confirm_password", "")
+        if password != confirm_password:
+            raise serializers.ValidationError(
+                {"confirm_password": "La confirmation du mot de passe ne correspond pas."}
+            )
+
+        validate_password(password)
         return attrs
 
+    def validate_email(self, value):
+        normalized = value.strip().lower()
+        if User.objects.filter(email__iexact=normalized).exists():
+            raise serializers.ValidationError("Un compte existe deja avec cette adresse courriel.")
+        return normalized
+
+    def validate_full_name(self, value):
+        normalized = value.strip()
+        if not normalized:
+            raise serializers.ValidationError("Le nom complet est requis.")
+        return normalized
+
     def create(self, validated_data):
+        validated_data.pop("confirm_password", None)
         full_name = validated_data.pop("full_name").strip()
-        email = validated_data["email"].lower()
+        email = validated_data["email"]
 
         username_base = email.split("@")[0][:140] or "user"
         username = username_base
